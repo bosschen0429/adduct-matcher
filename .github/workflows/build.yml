@@ -25,7 +25,7 @@ jobs:
     
     - name: Build
       run: |
-        pyinstaller --onefile --name="AdductMatcher" adduct_matcher.py
+        pyinstaller --onefile --name="AdductMatcher" "Adduct matcher.py"
     
     - name: Copy files
       run: |
@@ -58,7 +58,7 @@ jobs:
     
     - name: Build
       run: |
-        pyinstaller --onefile --name="AdductMatcher" adduct_matcher.py
+        pyinstaller --onefile --name="AdductMatcher" "Adduct matcher.py"
     
     - name: Remove quarantine
       run: |
