@@ -30,7 +30,7 @@ jobs:
     - name: Copy files
       run: |
         copy README.md dist\
-        copy Adduct_Table.xlsx dist\
+        copy "Adduct Table.xlsx" dist\
     
     - uses: actions/upload-artifact@v4
       with:
@@ -38,7 +38,7 @@ jobs:
         path: |
           dist/AdductMatcher.exe
           dist/README.md
-          dist/Adduct_Table.xlsx
+          dist/Adduct Table.xlsx
 
   build-macos:
     name: Build macOS
@@ -67,7 +67,7 @@ jobs:
     - name: Copy files
       run: |
         cp README.md dist/
-        cp Adduct_Table.xlsx dist/
+        cp "Adduct Table.xlsx" dist/
     
     - uses: actions/upload-artifact@v4
       with:
@@ -75,7 +75,7 @@ jobs:
         path: |
           dist/AdductMatcher
           dist/README.md
-          dist/Adduct_Table.xlsx
+          dist/Adduct Table.xlsx
 
   create-release:
     name: Create Release
