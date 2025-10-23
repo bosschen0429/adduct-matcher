@@ -161,6 +161,7 @@ class AdductMatcher:
     def match_adducts(self, df: pd.DataFrame, rt_tolerance: float = 0.05) -> pd.DataFrame:
         """
         比對加合物，保留所有原始欄位
+        當多個base競爭同一個pair時，保留所有配對（列出所有可能）
         
         Parameters:
         -----------
@@ -194,21 +195,29 @@ class AdductMatcher:
             
             # 與附近的peak比對
             for _, nearby_peak in nearby_peaks.iterrows():
+                nearby_rt = nearby_peak[self.rt_col]
                 nearby_mz = nearby_peak[self.mz_col]
                 nearby_intensity = nearby_peak[self.intensity_col]
+                
+                # 計算RT差異（用於後續篩選）
+                rt_diff = abs(current_rt - nearby_rt)
                 
                 # 計算質量差 (大減小)
                 if nearby_mz > current_mz:
                     mz_diff = nearby_mz - current_mz
                     base_mz = current_mz
+                    base_rt = current_rt
                     base_row = row
                     pair_mz = nearby_mz
+                    pair_rt = nearby_rt
                     pair_row = nearby_peak
                 else:
                     mz_diff = current_mz - nearby_mz
                     base_mz = nearby_mz
+                    base_rt = nearby_rt
                     base_row = nearby_peak
                     pair_mz = current_mz
+                    pair_rt = current_rt
                     pair_row = row
                 
                 # 與加合物表比對
@@ -241,6 +250,7 @@ class AdductMatcher:
                         result['Theoretical_Delta_Da'] = theoretical_delta
                         result['Observed_Delta_Da'] = mz_diff
                         result['PPM_Error'] = round(ppm_error_value, 2)
+                        result['RT_Diff'] = rt_diff  # 添加RT差異用於篩選
                         result['Reference_mz'] = reference_mz
                         result['Annotation'] = f"{adduct['To']} of Base (m/z {base_mz:.4f})"
                         
@@ -251,11 +261,29 @@ class AdductMatcher:
             
             # 移除重複的配對（同一組Base-Pair-Adduct只保留一次）
             base_mz_col = f'Base_{self.mz_col}'
+            base_rt_col = f'Base_{self.rt_col}'
             pair_mz_col = f'Pair_{self.mz_col}'
+            pair_rt_col = f'Pair_{self.rt_col}'
+            
+            # 先去除完全相同的配對
             results_df = results_df.drop_duplicates(
-                subset=[base_mz_col, pair_mz_col, 'Pair_Adduct'], 
+                subset=[base_mz_col, base_rt_col, pair_mz_col, pair_rt_col, 'Pair_Adduct'], 
                 keep='first'
             ).reset_index(drop=True)
+            
+            # 方案2: 保留所有配對，但在同一個Base有多個Pair時，選RT最近的
+            # 當一個Base有多個Pair候選時，保留RT最接近的
+            results_df = results_df.sort_values('RT_Diff')
+            results_df = results_df.drop_duplicates(
+                subset=[base_mz_col, base_rt_col, 'Pair_Adduct'],
+                keep='first'
+            ).reset_index(drop=True)
+            
+            # 當一個Pair有多個Base時，保留所有配對（不去重）
+            # 這樣可以列出所有可能性
+            
+            # 移除RT_Diff欄位（用戶不需要看到）
+            results_df = results_df.drop(columns=['RT_Diff'])
             
             print(f"✓ 找到 {len(results_df)} 個加合物配對")
             
@@ -298,40 +326,83 @@ class AdductMatcher:
         
         # 新增識別欄位
         df_marked['Adduct_Type'] = '[M+H]+'  # 預設都是[M+H]+
-        df_marked['Matched_Adduct'] = ''     # 配對到的加合物類型
         df_marked['Pair_mz'] = ''            # 配對的m/z值
         df_marked['PPM_Error'] = ''          # PPM誤差
+        df_marked['Description'] = ''     # 配對說明
         df_marked['Is_Matched_Base'] = False  # 是否為有配對的Base
         
         if not results.empty:
             # 建立m/z到索引的映射
             mz_col = self.mz_col
+            rt_col = self.rt_col
             base_mz_col = f'Base_{mz_col}'
             pair_mz_col = f'Pair_{mz_col}'
+            base_rt_col = f'Base_{rt_col}'
+            pair_rt_col = f'Pair_{rt_col}'
             
-            # 收集所有Base m/z（被配對的[M+H]+）
-            base_mz_list = results[base_mz_col].unique()
+            # 建立Pair到多個Base的映射字典
+            pair_to_bases = {}  # key: (pair_mz, pair_rt), value: list of (base_mz, adduct, ppm)
+            
+            for _, result_row in results.iterrows():
+                base_mz = result_row[base_mz_col]
+                base_rt = result_row[base_rt_col]
+                pair_mz = result_row[pair_mz_col]
+                pair_rt = result_row[pair_rt_col]
+                adduct = result_row['Pair_Adduct']
+                ppm = result_row['PPM_Error']
+                
+                pair_key = (pair_mz, pair_rt)
+                if pair_key not in pair_to_bases:
+                    pair_to_bases[pair_key] = []
+                
+                pair_to_bases[pair_key].append({
+                    'base_mz': base_mz,
+                    'adduct': adduct,
+                    'ppm': ppm
+                })
             
             # 標記Base化合物（有配對的[M+H]+）
-            for base_mz in base_mz_list:
-                mask = abs(df_marked[mz_col] - base_mz) < 0.0001
+            for _, result_row in results.iterrows():
+                base_mz = result_row[base_mz_col]
+                base_rt = result_row[base_rt_col]
+                
+                # 同時檢查 m/z 和 RT
+                mask = (abs(df_marked[mz_col] - base_mz) < 0.0001) & \
+                       (abs(df_marked[rt_col] - base_rt) < 0.0001)
                 if mask.any():
                     df_marked.loc[mask, 'Is_Matched_Base'] = True
             
-            # 標記Pair化合物（標記為對應的加合物類型）
-            for _, row in results.iterrows():
-                pair_mz = row[pair_mz_col]
-                base_mz = row[base_mz_col]
-                adduct_type = row['Pair_Adduct']
-                ppm_error = row['PPM_Error']
+            # 標記Pair化合物（標記為對應的加合物類型，可能有多個）
+            for pair_key, base_list in pair_to_bases.items():
+                pair_mz, pair_rt = pair_key
                 
-                # 找到對應的行並標記
-                mask = abs(df_marked[mz_col] - pair_mz) < 0.0001
+                # 找到對應的Pair行
+                mask = (abs(df_marked[mz_col] - pair_mz) < 0.0001) & \
+                       (abs(df_marked[rt_col] - pair_rt) < 0.0001)
+                
                 if mask.any():
-                    df_marked.loc[mask, 'Adduct_Type'] = adduct_type
-                    df_marked.loc[mask, 'Matched_Adduct'] = f"{adduct_type} of Base m/z {base_mz:.4f}"
-                    df_marked.loc[mask, 'Pair_mz'] = base_mz
-                    df_marked.loc[mask, 'PPM_Error'] = ppm_error
+                    # 如果有多個Base，按PPM排序（最小的最可能）
+                    base_list_sorted = sorted(base_list, key=lambda x: x['ppm'])
+                    
+                    # 合併所有加合物類型
+                    adduct_types = '; '.join([b['adduct'] for b in base_list_sorted])
+                    
+                    # 合併所有配對說明（不包含PPM資訊）
+                    descriptions = '; '.join([
+                        f"{b['adduct']} of Base m/z {b['base_mz']:.4f}"
+                        for b in base_list_sorted
+                    ])
+                    
+                    # 合併所有可能的 Base m/z（用分號分隔）
+                    pair_mz_list = '; '.join([f"{b['base_mz']:.4f}" for b in base_list_sorted])
+                    
+                    # 合併所有PPM誤差（用分號分隔）
+                    ppm_list = '; '.join([f"{b['ppm']:.2f}" for b in base_list_sorted])
+                    
+                    df_marked.loc[mask, 'Adduct_Type'] = adduct_types
+                    df_marked.loc[mask, 'Pair_mz'] = pair_mz_list  # 列出所有Base m/z
+                    df_marked.loc[mask, 'PPM_Error'] = ppm_list  # 列出所有PPM誤差
+                    df_marked.loc[mask, 'Description'] = descriptions
         
         # 寫入Excel並設定格式
         with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
@@ -409,7 +480,7 @@ class AdductMatcher:
             print(f"    • 黑色字體 = 未配對的 [M+H]+ ({unmatched_count} 個)")
             print(f"    • 紅色字體 = 有配對的 Base化合物 ([M+H]+) ({base_count} 個)")
             print(f"    • 黃色背景 = 配對的加合物 ({pair_count} 個)")
-            print(f"    • 新增欄位: Adduct_Type, Matched_Adduct, Pair_mz, PPM_Error")
+            print(f"    • 新增欄位: Adduct_Type, Description, Pair_mz, PPM_Error")
         else:
             print(f"    • 未找到配對結果")
     
