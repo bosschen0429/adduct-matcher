@@ -13,7 +13,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 
-class AdductMatcher:
+class Adduct_matcher:
     """ESI加合物比對器"""
     
     def __init__(self, ppm_tolerance: float = 20.0):
@@ -542,7 +542,7 @@ class AdductMatcher:
         return results
 
 
-class AdductMatcherGUI:
+class Adduct_matcherGUI:
     """圖形化介面"""
     
     def __init__(self, root):
@@ -661,7 +661,7 @@ class AdductMatcherGUI:
             self.update_status("="*60)
             
             # 建立比對器
-            matcher = AdductMatcher(ppm_tolerance=ppm_tol)
+            matcher = Adduct_matcher(ppm_tolerance=ppm_tol)
             
             # 載入數據
             self.update_status("\n讀取數據中...")
@@ -725,7 +725,7 @@ def main():
     from tkinter import filedialog, messagebox
     
     root = tk.Tk()
-    app = AdductMatcherGUI(root)
+    app = Adduct_matcherGUI(root)
     root.mainloop()
 
 
