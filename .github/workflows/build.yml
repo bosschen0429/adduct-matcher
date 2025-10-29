@@ -25,7 +25,7 @@ jobs:
     
     - name: Build
       run: |
-        pyinstaller --onefile --name="AdductMatcher" "Adduct matcher.py"
+        pyinstaller --onefile --name="Adduct_matcher" "Adduct_matcher.py"
     
     - name: Copy files
       run: |
@@ -35,7 +35,7 @@ jobs:
       with:
         name: Windows-Build
         path: |
-          dist/AdductMatcher.exe
+          dist/Adduct_matcher.exe
           dist/README.md
 
   build-macos:
@@ -56,11 +56,11 @@ jobs:
     
     - name: Build
       run: |
-        pyinstaller --onefile --name="AdductMatcher" "Adduct matcher.py"
+        pyinstaller --onefile --name="Adduct_matcher" "Adduct_matcher.py"
     
     - name: Remove quarantine
       run: |
-        xattr -cr dist/AdductMatcher || true
+        xattr -cr dist/Adduct_matcher || true
     
     - name: Copy files
       run: |
@@ -70,7 +70,7 @@ jobs:
       with:
         name: macOS-Build
         path: |
-          dist/AdductMatcher
+          dist/Adduct_matcher
           dist/README.md
 
   create-release:
@@ -85,15 +85,15 @@ jobs:
     - name: Zip files
       run: |
         cd Windows-Build
-        zip -r ../AdductMatcher-Windows.zip *
+        zip -r ../Adduct_matcher-Windows.zip *
         cd ../macOS-Build
-        zip -r ../AdductMatcher-macOS.zip *
+        zip -r ../Adduct_matcher-macOS.zip *
         cd ..
     
     - uses: softprops/action-gh-release@v2
       with:
         files: |
-          AdductMatcher-Windows.zip
-          AdductMatcher-macOS.zip
+          Adduct_matcher-Windows.zip
+          Adduct_matcher-macOS.zip
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
