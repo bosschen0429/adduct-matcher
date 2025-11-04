@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ESI加合物比對程式
-自動識別質譜數據中的加合物配對
+ESI Adduct Matcher
+Automatically identify adduct pairs in mass spectrometry data
 """
 
 import pandas as pd
@@ -14,28 +14,30 @@ warnings.filterwarnings('ignore')
 
 
 class Adduct_matcher:
-    """ESI加合物比對器"""
+    """ESI Adduct Matcher"""
     
-    def __init__(self, ppm_tolerance: float = 20.0):
+    def __init__(self, ppm_tolerance: float = 20.0, custom_adduct_file: Optional[str] = None):
         """
-        初始化加合物比對器
+        Initialize Adduct Matcher
         
         Parameters:
         -----------
         ppm_tolerance : float
-            質量誤差容許範圍 (ppm)，預設為 20 ppm
+            Mass error tolerance (ppm), default is 20 ppm
+        custom_adduct_file : str, optional
+            Path to custom adduct table Excel file
         """
-        self.ppm_tolerance = ppm_tolerance / 1_000_000  # 轉換為比例
-        self.adduct_table = self._create_adduct_table()
+        self.ppm_tolerance = ppm_tolerance / 1_000_000  # Convert to ratio
+        self.adduct_table = self._load_adduct_table(custom_adduct_file)
         
-        # 欄位相關資訊
+        # Column information
         self.rt_col = None
         self.mz_col = None
         self.intensity_col = None
         self.all_columns = None
         
     def _create_adduct_table(self) -> pd.DataFrame:
-        """建立23個常見ESI加合物質量差異表"""
+        """Create default table with 23 common ESI adducts mass differences"""
         data = {
             'From': ['[M+H]+'] * 23,
             'To': [
@@ -56,23 +58,69 @@ class Adduct_matcher:
         }
         return pd.DataFrame(data)
     
-    def load_data(self, file_path: str) -> pd.DataFrame:
+    def _load_adduct_table(self, custom_file: Optional[str] = None) -> pd.DataFrame:
         """
-        載入數據並自動識別欄位 (支援 Excel, CSV, TSV)
+        Load adduct table from custom file or use default
         
         Parameters:
         -----------
-        file_path : str
-            檔案路徑
+        custom_file : str, optional
+            Path to custom adduct table Excel file
+            Expected columns: 'From', 'To', 'Delta_Da'
             
         Returns:
         --------
         pd.DataFrame
-            包含所有欄位的數據框
+            Adduct table
+        """
+        if custom_file:
+            try:
+                # Load custom adduct table
+                custom_df = pd.read_excel(custom_file)
+                
+                # Validate required columns
+                required_cols = ['From', 'To', 'Delta_Da']
+                if not all(col in custom_df.columns for col in required_cols):
+                    print(f"⚠ Warning: Custom adduct table missing required columns: {required_cols}")
+                    print(f"  Using default adduct table instead.")
+                    return self._create_adduct_table()
+                
+                # Filter valid rows
+                custom_df = custom_df[required_cols].dropna()
+                
+                if len(custom_df) == 0:
+                    print(f"⚠ Warning: Custom adduct table is empty.")
+                    print(f"  Using default adduct table instead.")
+                    return self._create_adduct_table()
+                
+                print(f"✓ Loaded custom adduct table: {len(custom_df)} adducts")
+                return custom_df
+                
+            except Exception as e:
+                print(f"⚠ Warning: Failed to load custom adduct table: {str(e)}")
+                print(f"  Using default adduct table instead.")
+                return self._create_adduct_table()
+        else:
+            # Use default adduct table
+            return self._create_adduct_table()
+    
+    def load_data(self, file_path: str) -> pd.DataFrame:
+        """
+        Load data and automatically identify columns (supports Excel, CSV, TSV)
+        
+        Parameters:
+        -----------
+        file_path : str
+            File path
+            
+        Returns:
+        --------
+        pd.DataFrame
+            DataFrame with all columns
         """
         file_path = str(file_path)
         
-        # 根據副檔名選擇讀取方式
+        # Select reading method based on file extension
         if file_path.endswith('.csv'):
             df = pd.read_csv(file_path, encoding='utf-8-sig')
         elif file_path.endswith('.tsv') or file_path.endswith('.txt'):
@@ -80,9 +128,9 @@ class Adduct_matcher:
         elif file_path.endswith(('.xlsx', '.xls', '.xlsm', '.xlsb')):
             df = pd.read_excel(file_path)
         else:
-            raise ValueError(f"不支援的檔案格式。支援: .xlsx, .xls, .xlsm, .xlsb, .csv, .tsv, .txt")
+            raise ValueError(f"Unsupported file format. Supported: .xlsx, .xls, .xlsm, .xlsb, .csv, .tsv, .txt")
         
-        # 自動識別 RT, m/z, Intensity 欄位
+        # Auto-identify RT, m/z, Intensity columns
         rt_col = self._find_column(df.columns, [
             'rt', 'retention time', 'retention_time', 'retentiontime',
             'rt (min)', 'rt(min)', 'retention time (min)', 'time',
@@ -101,55 +149,55 @@ class Adduct_matcher:
         
         if not rt_col or not mz_col or not intensity_col:
             missing = []
-            if not rt_col: missing.append("RT (滯留時間)")
-            if not mz_col: missing.append("m/z (質荷比)")
-            if not intensity_col: missing.append("Intensity (強度)")
+            if not rt_col: missing.append("RT (Retention Time)")
+            if not mz_col: missing.append("m/z (Mass-to-Charge)")
+            if not intensity_col: missing.append("Intensity")
             
-            available_cols = "\n可用的欄位: " + ", ".join(df.columns.tolist())
-            raise ValueError(f"無法識別欄位: {', '.join(missing)}\n請確認標頭包含這些欄位名稱{available_cols}")
+            available_cols = "\nAvailable columns: " + ", ".join(df.columns.tolist())
+            raise ValueError(f"Cannot identify columns: {', '.join(missing)}\nPlease ensure headers contain these column names{available_cols}")
         
-        # 標記主要欄位
+        # Mark main columns
         self.rt_col = rt_col
         self.mz_col = mz_col
         self.intensity_col = intensity_col
         self.all_columns = list(df.columns)
         
-        print(f"✓ 成功讀取檔案: {Path(file_path).name}")
-        print(f"  數據形狀: {df.shape[0]} 行 × {df.shape[1]} 欄")
-        print(f"\n已識別欄位:")
-        print(f"  RT (滯留時間):  {rt_col}")
-        print(f"  m/z (質荷比):    {mz_col}")
-        print(f"  Intensity (強度): {intensity_col}")
-        print(f"  保留其他欄位: {len(self.all_columns) - 3} 個")
+        print(f"✓ Successfully loaded file: {Path(file_path).name}")
+        print(f"  Data shape: {df.shape[0]} rows × {df.shape[1]} columns")
+        print(f"\nIdentified columns:")
+        print(f"  RT (Retention Time):  {rt_col}")
+        print(f"  m/z (Mass-to-Charge): {mz_col}")
+        print(f"  Intensity:            {intensity_col}")
+        print(f"  Other columns kept:   {len(self.all_columns) - 3}")
         
-        # 移除無效數據 (只檢查 m/z 和 intensity > 0, RT 允許為 0)
+        # Remove invalid data (only check m/z and intensity > 0, RT can be 0)
         original_count = len(df)
         df = df[(df[mz_col] > 0) & (df[intensity_col] > 0)]
         df = df.dropna(subset=[rt_col, mz_col, intensity_col])
         
         removed_count = original_count - len(df)
         if removed_count > 0:
-            print(f"\n⚠ 已移除 {removed_count} 行無效數據 (m/z≤0, Intensity≤0, 或包含缺失值)")
+            print(f"\n⚠ Removed {removed_count} invalid rows (m/z≤0, Intensity≤0, or missing values)")
         
-        print(f"✓ 有效數據: {len(df)} 行\n")
+        print(f"✓ Valid data: {len(df)} rows\n")
         
         return df.reset_index(drop=True)
     
     def _find_column(self, columns: List[str], possible_names: List[str]) -> Optional[str]:
         """
-        尋找符合的欄位名稱
+        Find matching column name
         
         Parameters:
         -----------
         columns : list
-            所有欄位名稱
+            All column names
         possible_names : list
-            可能的欄位名稱列表
+            List of possible column names
             
         Returns:
         --------
         str or None
-            找到的欄位名稱
+            Found column name
         """
         for col in columns:
             col_lower = str(col).lower().strip()
@@ -158,24 +206,24 @@ class Adduct_matcher:
                     return col
         return None
     
-    def match_adducts(self, df: pd.DataFrame, rt_tolerance: float = 0.05) -> pd.DataFrame:
+    def match_adducts(self, df: pd.DataFrame, rt_tolerance: float = 0.5) -> pd.DataFrame:
         """
-        比對加合物，保留所有原始欄位
-        當多個base競爭同一個pair時，保留所有配對（列出所有可能）
+        Match adducts, keep all original columns
+        When multiple bases compete for the same pair, keep all matches (list all possibilities)
         
         Parameters:
         -----------
         df : pd.DataFrame
-            包含質譜數據的DataFrame
+            DataFrame with mass spectrometry data
         rt_tolerance : float
-            滯留時間容許誤差（分鐘），預設為0.05分鐘
+            RT tolerance (minutes), default is 0.5 minutes
             
         Returns:
         --------
         pd.DataFrame
-            包含加合物比對結果的DataFrame，保留所有原始欄位
+            DataFrame with adduct matching results, keeping all original columns
         """
-        print("開始進行加合物比對...")
+        print("Starting adduct matching...")
         
         # 確保數據按RT排序
         df = df.sort_values(by=self.rt_col).reset_index(drop=True)
@@ -301,25 +349,25 @@ class Adduct_matcher:
     def save_results(self, df: pd.DataFrame, original_file: str, 
                     results: pd.DataFrame, output_file: Optional[str] = None):
         """
-        儲存結果到Excel檔案，在原始數據上標記配對結果
+        Save results to Excel file, marking matching results on original data
         
         Parameters:
         -----------
         df : pd.DataFrame
-            原始數據
+            Original data
         original_file : str
-            原始檔案路徑
+            Original file path
         results : pd.DataFrame
-            配對結果
+            Matching results
         output_file : str, optional
-            輸出檔案名稱，若未指定則自動生成
+            Output file name, auto-generated if not specified
         """
         if output_file is None:
-            # 自動生成輸出檔案名稱
+            # Auto-generate output file name
             file_path = Path(original_file)
             output_file = str(file_path.parent / f"{file_path.stem}_adduct_results.xlsx")
         
-        print(f"\n正在儲存結果到: {Path(output_file).name}")
+        print(f"\nSaving results to: {Path(output_file).name}")
         
         # 準備標記資訊
         df_marked = df.copy()
@@ -406,56 +454,59 @@ class Adduct_matcher:
         
         # 寫入Excel並設定格式
         with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
-            # 寫入標記後的原始數據（不包含Is_Matched_Base欄位）
+            # Sheet 1: 寫入標記後的原始數據（不包含Is_Matched_Base欄位）
             df_output = df_marked.drop(columns=['Is_Matched_Base'])
-            df_output.to_excel(writer, sheet_name='Original_Data_Annotated', index=False)
+            df_output.to_excel(writer, sheet_name='All_Feature_Annotated', index=False)
+            
+            # Sheet 2: 只保留非加合物的訊號（白色背景：黑色和紅色字體）
+            df_non_adduct = df_marked[df_marked['Adduct_Type'] == '[M+H]+'].copy()
+            df_non_adduct = df_non_adduct.drop(columns=['Is_Matched_Base'])
+            df_non_adduct.to_excel(writer, sheet_name='Non_Adduct_Feature', index=False)
             
             # 取得workbook和worksheet以設定格式
             from openpyxl.styles import PatternFill, Font
             workbook = writer.book
-            worksheet = writer.sheets['Original_Data_Annotated']
+            
+            # 格式化 Sheet 1: All_Feature_Annotated
+            worksheet1 = writer.sheets['All_Feature_Annotated']
             
             if not results.empty:
-                # 找到Adduct_Type欄位的索引
-                adduct_type_col_idx = list(df_output.columns).index('Adduct_Type') + 1
-                
                 # 設定顏色
                 yellow_fill = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
                 red_font = Font(color='FF0000', bold=True)
                 
                 # 遍歷每一行設定格式
-                for row_idx in range(2, len(df_marked) + 2):  # 從第2行開始（第1行是標題）
+                for row_idx in range(2, len(df_marked) + 2):
                     adduct_type_value = df_marked.iloc[row_idx-2]['Adduct_Type']
                     is_matched_base = df_marked.iloc[row_idx-2]['Is_Matched_Base']
                     
                     if adduct_type_value == '[M+H]+' and is_matched_base:
                         # 有配對的Base化合物 - 紅色字體
                         for col_idx in range(1, len(df_output.columns) + 1):
-                            cell = worksheet.cell(row=row_idx, column=col_idx)
+                            cell = worksheet1.cell(row=row_idx, column=col_idx)
                             cell.font = red_font
                     elif adduct_type_value and adduct_type_value != '[M+H]+':
                         # Pair化合物 - 黃色背景
                         for col_idx in range(1, len(df_output.columns) + 1):
-                            cell = worksheet.cell(row=row_idx, column=col_idx)
+                            cell = worksheet1.cell(row=row_idx, column=col_idx)
                             cell.fill = yellow_fill
-                    # 未配對的[M+H]+ 保持黑色（不做任何處理）
                 
                 # 格式化 Intensity 欄位為科學記號
-                intensity_col_idx = list(df_marked.columns).index(self.intensity_col) + 1
+                intensity_col_idx = list(df_output.columns).index(self.intensity_col) + 1
                 for row in range(2, len(df_marked) + 2):
-                    cell = worksheet.cell(row=row, column=intensity_col_idx)
+                    cell = worksheet1.cell(row=row, column=intensity_col_idx)
                     cell.number_format = '0.00E+00'
                 
-                # 如果有PPM_Error欄位，也格式化
-                if 'PPM_Error' in df_marked.columns:
-                    ppm_col_idx = list(df_marked.columns).index('PPM_Error') + 1
+                # 格式化 PPM_Error 欄位
+                if 'PPM_Error' in df_output.columns:
+                    ppm_col_idx = list(df_output.columns).index('PPM_Error') + 1
                     for row in range(2, len(df_marked) + 2):
-                        cell = worksheet.cell(row=row, column=ppm_col_idx)
+                        cell = worksheet1.cell(row=row, column=ppm_col_idx)
                         if cell.value and cell.value != '':
                             cell.number_format = '0.00'
                 
-                # 調整欄寬
-                for column in worksheet.columns:
+                # 調整欄寬 - Sheet 1
+                for column in worksheet1.columns:
                     max_length = 0
                     column_letter = column[0].column_letter
                     for cell in column:
@@ -465,162 +516,434 @@ class Adduct_matcher:
                         except:
                             pass
                     adjusted_width = min(max_length + 2, 50)
-                    worksheet.column_dimensions[column_letter].width = adjusted_width
-            else:
-                # 沒有配對結果時的簡單格式化
-                df_marked.to_excel(writer, sheet_name='Original_Data_Annotated', index=False)
+                    worksheet1.column_dimensions[column_letter].width = adjusted_width
+            
+            # 格式化 Sheet 2: Non_Adduct_Feature
+            worksheet2 = writer.sheets['Non_Adduct_Feature']
+            
+            if not results.empty and len(df_non_adduct) > 0:
+                red_font = Font(color='FF0000', bold=True)
+                
+                # 標記有配對的Base化合物（紅色字體）
+                non_adduct_with_match = df_marked[
+                    (df_marked['Adduct_Type'] == '[M+H]+') & 
+                    (df_marked['Is_Matched_Base'] == True)
+                ].index.tolist()
+                
+                # 建立索引映射
+                non_adduct_indices = df_non_adduct.index.tolist()
+                
+                for row_idx in range(2, len(df_non_adduct) + 2):
+                    original_idx = non_adduct_indices[row_idx - 2]
+                    
+                    if original_idx in non_adduct_with_match:
+                        # 有配對的Base - 紅色字體
+                        for col_idx in range(1, len(df_non_adduct.columns) + 1):
+                            cell = worksheet2.cell(row=row_idx, column=col_idx)
+                            cell.font = red_font
+                
+                # 格式化 Intensity 欄位
+                if self.intensity_col in df_non_adduct.columns:
+                    intensity_col_idx = list(df_non_adduct.columns).index(self.intensity_col) + 1
+                    for row in range(2, len(df_non_adduct) + 2):
+                        cell = worksheet2.cell(row=row, column=intensity_col_idx)
+                        cell.number_format = '0.00E+00'
+                
+                # 調整欄寬 - Sheet 2
+                for column in worksheet2.columns:
+                    max_length = 0
+                    column_letter = column[0].column_letter
+                    for cell in column:
+                        try:
+                            if len(str(cell.value)) > max_length:
+                                max_length = len(str(cell.value))
+                        except:
+                            pass
+                    adjusted_width = min(max_length + 2, 50)
+                    worksheet2.column_dimensions[column_letter].width = adjusted_width
         
-        print(f"✓ 結果已成功儲存!")
-        print(f"  Original_Data_Annotated - 標記後的原始數據")
+        print(f"✓ Results saved successfully!")
+        print(f"  Sheet 1: All_Feature_Annotated - All peaks with annotations")
+        print(f"  Sheet 2: Non_Adduct_Feature - Only [M+H]+ peaks (no adduct peaks)")
         if not results.empty:
             base_count = df_marked['Is_Matched_Base'].sum()
             pair_count = (df_marked['Adduct_Type'] != '[M+H]+').sum()
             unmatched_count = len(df_marked) - base_count - pair_count
+            non_adduct_total = len(df_non_adduct)
             
-            print(f"    • 黑色字體 = 未配對的 [M+H]+ ({unmatched_count} 個)")
-            print(f"    • 紅色字體 = 有配對的 Base化合物 ([M+H]+) ({base_count} 個)")
-            print(f"    • 黃色背景 = 配對的加合物 ({pair_count} 個)")
-            print(f"    • 新增欄位: Adduct_Type, Description, Pair_mz, PPM_Error")
+            print(f"\n  All_Feature_Annotated:")
+            print(f"    • Black text = Unmatched [M+H]+ ({unmatched_count} peaks)")
+            print(f"    • Red text = Matched Base compounds ([M+H]+) ({base_count} peaks)")
+            print(f"    • Yellow background = Matched adducts ({pair_count} peaks)")
+            print(f"\n  Non_Adduct_Feature:")
+            print(f"    • Total [M+H]+ peaks: {non_adduct_total}")
+            print(f"    • Black text = Unmatched ({unmatched_count} peaks)")
+            print(f"    • Red text = Has adduct pair ({base_count} peaks)")
         else:
-            print(f"    • 未找到配對結果")
+            print(f"    • No matching results found")
     
-    def process(self, file_path: str, rt_tolerance: float = 0.05, 
+    def process(self, file_path: str, rt_tolerance: float = 0.5, 
                 output_file: Optional[str] = None) -> pd.DataFrame:
         """
-        完整處理流程
+        Complete processing workflow
         
         Parameters:
         -----------
         file_path : str
-            輸入檔案路徑
+            Input file path
         rt_tolerance : float
-            RT容許誤差（分鐘）
+            RT tolerance (minutes)
         output_file : str, optional
-            輸出檔案名稱
+            Output file name
             
         Returns:
         --------
         pd.DataFrame
-            配對結果
+            Matching results
         """
         print("="*70)
-        print("ESI加合物比對程式")
+        print("ESI Adduct Matcher")
         print("="*70 + "\n")
         
-        # 載入數據
+        # Load data
         df = self.load_data(file_path)
         
-        # 顯示數據預覽
-        print("數據預覽 (前5行):")
+        # Show data preview
+        print("Data preview (first 5 rows):")
         print(df.head().to_string(index=False))
         print()
         
-        # 執行配對
+        # Execute matching
         results = self.match_adducts(df, rt_tolerance=rt_tolerance)
         
-        # 儲存結果
+        # Save results
         if not results.empty:
             self.save_results(df, file_path, results, output_file)
             
             print("\n" + "="*70)
-            print("✓ 分析完成!")
+            print("✓ Analysis completed!")
             print("="*70)
             
-            # 顯示關鍵統計
-            print(f"\n找到 {len(results)} 個加合物配對")
-            print(f"平均PPM誤差: {results['PPM_Error'].mean():.2f}")
-            print(f"PPM誤差範圍: {results['PPM_Error'].min():.2f} - {results['PPM_Error'].max():.2f}")
+            # Show key statistics
+            print(f"\nFound {len(results)} adduct pairs")
+            print(f"Average PPM error: {results['PPM_Error'].mean():.2f}")
+            print(f"PPM error range: {results['PPM_Error'].min():.2f} - {results['PPM_Error'].max():.2f}")
         else:
             print("\n" + "="*70)
-            print("⚠ 未找到符合的加合物配對")
+            print("⚠ No matching adduct pairs found")
             print("="*70)
-            print("\n建議:")
-            print("  1. 增加RT容許誤差 (例如: 0.1 或 0.2)")
-            print("  2. 增加PPM容許誤差 (例如: 30 或 50)")
-            print("  3. 檢查數據品質")
+            print("\nSuggestions:")
+            print("  1. Increase RT tolerance (e.g., 0.1 or 0.2)")
+            print("  2. Increase PPM tolerance (e.g., 30 or 50)")
+            print("  3. Check data quality")
         
         return results
 
 
 class Adduct_matcherGUI:
-    """圖形化介面"""
+    """Graphical User Interface"""
     
     def __init__(self, root):
         import tkinter as tk
-        from tkinter import filedialog, messagebox
+        from tkinter import filedialog, messagebox, ttk
         
         self.tk = tk
+        self.ttk = ttk
         self.filedialog = filedialog
         self.messagebox = messagebox
         
         self.root = root
-        self.root.title("ESI加合物比對程式")
-        self.root.geometry("600x500")
+        self.root.title("ESI Adduct Matcher")
+        self.root.geometry("700x750")
+        self.root.configure(bg='#f0f4f8')
         
         self.input_file = None
+        self.adduct_file = None
+        
+        # 現代配色方案
+        self.colors = {
+            'primary': '#2196F3',      # 藍色
+            'secondary': '#4CAF50',    # 綠色
+            'accent': '#FF9800',       # 橙色
+            'danger': '#F44336',       # 紅色
+            'bg_light': '#f0f4f8',     # 淺灰藍
+            'bg_white': '#ffffff',     # 白色
+            'text_dark': '#2c3e50',    # 深灰
+            'text_light': '#7f8c8d',   # 淺灰
+            'border': '#e0e6ed'        # 邊框灰
+        }
         
         self.create_widgets()
     
     def create_widgets(self):
         tk = self.tk
+        ttk = self.ttk
         
-        # 標題
+        # 設定 ttk 樣式
+        style = ttk.Style()
+        style.theme_use('clam')
+        
+        # 標題區域
+        title_frame = tk.Frame(self.root, bg=self.colors['primary'], height=80)
+        title_frame.pack(fill="x", pady=0)
+        title_frame.pack_propagate(False)
+        
         title_label = tk.Label(
-            self.root, 
-            text="ESI加合物比對程式",
-            font=("Arial", 16, "bold")
+            title_frame,
+            text="🔬 ESI Adduct Matcher",
+            font=("Segoe UI", 20, "bold"),
+            bg=self.colors['primary'],
+            fg='white'
         )
-        title_label.pack(pady=10)
+        title_label.pack(expand=True)
         
-        # 檔案選擇框架
-        file_frame = tk.LabelFrame(self.root, text="檔案選擇", padx=10, pady=10)
-        file_frame.pack(padx=20, pady=10, fill="x")
+        subtitle_label = tk.Label(
+            title_frame,
+            text="Identify adduct pairs in mass spectrometry data",
+            font=("Segoe UI", 9),
+            bg=self.colors['primary'],
+            fg='white'
+        )
+        subtitle_label.pack()
         
-        self.file_label = tk.Label(file_frame, text="未選擇檔案", fg="gray")
-        self.file_label.pack(side="left", padx=5)
+        # 主要內容區域
+        main_frame = tk.Frame(self.root, bg=self.colors['bg_light'])
+        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        # Step 1: 檔案選擇區域
+        step1_frame = tk.LabelFrame(
+            main_frame,
+            text="  Step 1: Select Files  ",
+            font=("Segoe UI", 11, "bold"),
+            bg=self.colors['bg_white'],
+            fg=self.colors['text_dark'],
+            relief="flat",
+            borderwidth=2,
+            highlightbackground=self.colors['border'],
+            highlightthickness=1
+        )
+        step1_frame.pack(fill="x", pady=(0, 15))
+        
+        # 內部容器
+        step1_inner = tk.Frame(step1_frame, bg=self.colors['bg_white'])
+        step1_inner.pack(fill="x", padx=15, pady=15)
+        
+        # 輸入檔案
+        input_container = tk.Frame(step1_inner, bg=self.colors['bg_white'])
+        input_container.pack(fill="x", pady=(0, 10))
+        
+        tk.Label(
+            input_container,
+            text="📁 Input Data File:",
+            font=("Segoe UI", 10, "bold"),
+            bg=self.colors['bg_white'],
+            fg=self.colors['text_dark']
+        ).pack(anchor="w", pady=(0, 5))
+        
+        input_row = tk.Frame(input_container, bg=self.colors['bg_white'])
+        input_row.pack(fill="x")
+        
+        self.file_label = tk.Label(
+            input_row,
+            text="No file selected",
+            font=("Segoe UI", 9),
+            bg=self.colors['bg_light'],
+            fg=self.colors['text_light'],
+            anchor="w",
+            padx=10,
+            pady=8,
+            relief="flat"
+        )
+        self.file_label.pack(side="left", fill="x", expand=True, padx=(0, 10))
         
         tk.Button(
-            file_frame, 
-            text="選擇檔案 (Excel/CSV/TSV)", 
-            command=self.select_file
-        ).pack(side="right", padx=5)
-        
-        # 參數設定框架
-        param_frame = tk.LabelFrame(self.root, text="參數設定", padx=10, pady=10)
-        param_frame.pack(padx=20, pady=10, fill="x")
-        
-        # PPM 容差
-        tk.Label(param_frame, text="PPM 容差:").grid(row=0, column=0, sticky="w", pady=5)
-        self.ppm_tolerance_var = tk.StringVar(value="20")
-        tk.Entry(param_frame, textvariable=self.ppm_tolerance_var, width=15).grid(row=0, column=1, pady=5)
-        
-        # RT 容差
-        tk.Label(param_frame, text="RT 容差 (分鐘):").grid(row=1, column=0, sticky="w", pady=5)
-        self.rt_tolerance_var = tk.StringVar(value="0.05")
-        tk.Entry(param_frame, textvariable=self.rt_tolerance_var, width=15).grid(row=1, column=1, pady=5)
-        
-        # 執行按鈕
-        tk.Button(
-            self.root, 
-            text="開始比對", 
-            command=self.process_data,
-            bg="#4CAF50",
-            fg="white",
-            font=("Arial", 12, "bold"),
+            input_row,
+            text="Browse",
+            command=self.select_file,
+            bg=self.colors['primary'],
+            fg='white',
+            font=("Segoe UI", 9, "bold"),
+            relief="flat",
             padx=20,
-            pady=10
-        ).pack(pady=20)
+            pady=8,
+            cursor="hand2",
+            activebackground='#1976D2',
+            activeforeground='white'
+        ).pack(side="right")
         
-        # 狀態顯示
-        self.status_text = tk.Text(self.root, height=12, width=70, state="disabled")
-        self.status_text.pack(padx=20, pady=10)
+        # 加合物表檔案
+        adduct_container = tk.Frame(step1_inner, bg=self.colors['bg_white'])
+        adduct_container.pack(fill="x")
+        
+        tk.Label(
+            adduct_container,
+            text="📋 Adduct Table (Optional):",
+            font=("Segoe UI", 10, "bold"),
+            bg=self.colors['bg_white'],
+            fg=self.colors['text_dark']
+        ).pack(anchor="w", pady=(0, 5))
+        
+        adduct_row = tk.Frame(adduct_container, bg=self.colors['bg_white'])
+        adduct_row.pack(fill="x")
+        
+        self.adduct_label = tk.Label(
+            adduct_row,
+            text="Using default (23 adducts)",
+            font=("Segoe UI", 9),
+            bg=self.colors['bg_light'],
+            fg=self.colors['text_light'],
+            anchor="w",
+            padx=10,
+            pady=8,
+            relief="flat"
+        )
+        self.adduct_label.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        
+        tk.Button(
+            adduct_row,
+            text="Browse",
+            command=self.select_adduct_file,
+            bg=self.colors['accent'],
+            fg='white',
+            font=("Segoe UI", 9, "bold"),
+            relief="flat",
+            padx=20,
+            pady=8,
+            cursor="hand2",
+            activebackground='#F57C00',
+            activeforeground='white'
+        ).pack(side="right")
+        
+        # Step 2: 參數設定區域
+        step2_frame = tk.LabelFrame(
+            main_frame,
+            text="  Step 2: Parameter Settings  ",
+            font=("Segoe UI", 11, "bold"),
+            bg=self.colors['bg_white'],
+            fg=self.colors['text_dark'],
+            relief="flat",
+            borderwidth=2,
+            highlightbackground=self.colors['border'],
+            highlightthickness=1
+        )
+        step2_frame.pack(fill="x", pady=(0, 15))
+        
+        step2_inner = tk.Frame(step2_frame, bg=self.colors['bg_white'])
+        step2_inner.pack(fill="x", padx=15, pady=15)
+        
+        # 參數網格
+        param_grid = tk.Frame(step2_inner, bg=self.colors['bg_white'])
+        param_grid.pack(fill="x")
+        
+        # PPM容差
+        ppm_frame = tk.Frame(param_grid, bg=self.colors['bg_white'])
+        ppm_frame.pack(side="left", expand=True, fill="x", padx=(0, 10))
+        
+        tk.Label(
+            ppm_frame,
+            text="⚙️ PPM Tolerance:",
+            font=("Segoe UI", 10, "bold"),
+            bg=self.colors['bg_white'],
+            fg=self.colors['text_dark']
+        ).pack(anchor="w", pady=(0, 5))
+        
+        self.ppm_tolerance_var = tk.StringVar(value="20")
+        ppm_entry = tk.Entry(
+            ppm_frame,
+            textvariable=self.ppm_tolerance_var,
+            font=("Segoe UI", 10),
+            bg=self.colors['bg_light'],
+            fg=self.colors['text_dark'],
+            relief="flat",
+            justify="center"
+        )
+        ppm_entry.pack(fill="x", ipady=8)
+        
+        # RT容差
+        rt_frame = tk.Frame(param_grid, bg=self.colors['bg_white'])
+        rt_frame.pack(side="left", expand=True, fill="x")
+        
+        tk.Label(
+            rt_frame,
+            text="⏱️ RT Tolerance (min):",
+            font=("Segoe UI", 10, "bold"),
+            bg=self.colors['bg_white'],
+            fg=self.colors['text_dark']
+        ).pack(anchor="w", pady=(0, 5))
+        
+        self.rt_tolerance_var = tk.StringVar(value="0.5")
+        rt_entry = tk.Entry(
+            rt_frame,
+            textvariable=self.rt_tolerance_var,
+            font=("Segoe UI", 10),
+            bg=self.colors['bg_light'],
+            fg=self.colors['text_dark'],
+            relief="flat",
+            justify="center"
+        )
+        rt_entry.pack(fill="x", ipady=8)
+        
+        # Step 3: 執行按鈕
+        step3_frame = tk.Frame(main_frame, bg=self.colors['bg_light'])
+        step3_frame.pack(fill="x", pady=(0, 15))
+        
+        self.run_button = tk.Button(
+            step3_frame,
+            text="▶️  Start Matching",
+            command=self.process_data,
+            bg=self.colors['secondary'],
+            fg='white',
+            font=("Segoe UI", 12, "bold"),
+            relief="flat",
+            padx=40,
+            pady=15,
+            cursor="hand2",
+            activebackground='#45a049',
+            activeforeground='white'
+        )
+        self.run_button.pack(expand=True)
+        
+        # 狀態顯示區域
+        status_frame = tk.LabelFrame(
+            main_frame,
+            text="  Status & Results  ",
+            font=("Segoe UI", 11, "bold"),
+            bg=self.colors['bg_white'],
+            fg=self.colors['text_dark'],
+            relief="flat",
+            borderwidth=2,
+            highlightbackground=self.colors['border'],
+            highlightthickness=1
+        )
+        status_frame.pack(fill="both", expand=True)
+        
+        status_inner = tk.Frame(status_frame, bg=self.colors['bg_white'])
+        status_inner.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # 使用Text widget顯示狀態
+        self.status_text = tk.Text(
+            status_inner,
+            height=12,
+            font=("Consolas", 9),
+            bg='#f8f9fa',
+            fg=self.colors['text_dark'],
+            relief="flat",
+            wrap="word",
+            state="disabled",
+            padx=10,
+            pady=10
+        )
+        self.status_text.pack(fill="both", expand=True)
+        
+        # 初始訊息
+        self.update_status("👋 Welcome! Please select your data file to begin.")
     
     def select_file(self):
-        """選擇輸入檔案"""
+        """Select input file"""
         file_path = self.filedialog.askopenfilename(
-            title="選擇質譜數據檔案",
+            title="Select mass spectrometry data file",
             filetypes=[
-                ("所有支援格式", "*.xlsx *.xls *.xlsm *.xlsb *.csv *.tsv *.txt"),
+                ("All supported formats", "*.xlsx *.xls *.xlsm *.xlsb *.csv *.tsv *.txt"),
                 ("Excel files", "*.xlsx *.xls *.xlsm *.xlsb"),
                 ("CSV files", "*.csv"),
                 ("TSV files", "*.tsv *.txt"),
@@ -632,6 +955,20 @@ class Adduct_matcherGUI:
             self.input_file = file_path
             self.file_label.config(text=Path(file_path).name, fg="black")
     
+    def select_adduct_file(self):
+        """Select custom adduct table file"""
+        file_path = self.filedialog.askopenfilename(
+            title="Select custom adduct table (Excel)",
+            filetypes=[
+                ("Excel files", "*.xlsx *.xls *.xlsm *.xlsb"),
+                ("All files", "*.*")
+            ]
+        )
+        
+        if file_path:
+            self.adduct_file = file_path
+            self.adduct_label.config(text=Path(file_path).name, fg="black")
+    
     def update_status(self, message):
         """更新狀態顯示"""
         self.status_text.config(state="normal")
@@ -641,9 +978,9 @@ class Adduct_matcherGUI:
         self.root.update()
     
     def process_data(self):
-        """處理數據"""
+        """Process data"""
         if not self.input_file:
-            self.messagebox.showerror("錯誤", "請先選擇輸入檔案!")
+            self.messagebox.showerror("❌ Error", "Please select an input file first!")
             return
         
         try:
@@ -652,71 +989,87 @@ class Adduct_matcherGUI:
             self.status_text.delete(1.0, "end")
             self.status_text.config(state="disabled")
             
+            # 禁用按鈕防止重複點擊
+            self.run_button.config(state="disabled", bg='#cccccc')
+            self.root.update()
+            
             # 讀取參數
             ppm_tol = float(self.ppm_tolerance_var.get())
             rt_tol = float(self.rt_tolerance_var.get())
             
             self.update_status("="*60)
-            self.update_status("開始處理...")
+            self.update_status("🚀 Starting process...")
             self.update_status("="*60)
             
-            # 建立比對器
-            matcher = Adduct_matcher(ppm_tolerance=ppm_tol)
+            # Create matcher with optional custom adduct table
+            matcher = Adduct_matcher(ppm_tolerance=ppm_tol, custom_adduct_file=self.adduct_file)
             
             # 載入數據
-            self.update_status("\n讀取數據中...")
+            self.update_status("\n📂 Loading data...")
             df = matcher.load_data(self.input_file)
             
             # 顯示識別的欄位
-            self.update_status(f"\n已識別欄位:")
-            self.update_status(f"  RT: {matcher.rt_col}")
-            self.update_status(f"  m/z: {matcher.mz_col}")
-            self.update_status(f"  Intensity: {matcher.intensity_col}")
-            self.update_status(f"  保留其他欄位: {len(matcher.all_columns) - 3} 個")
+            self.update_status(f"\n✅ Identified columns:")
+            self.update_status(f"  • RT: {matcher.rt_col}")
+            self.update_status(f"  • m/z: {matcher.mz_col}")
+            self.update_status(f"  • Intensity: {matcher.intensity_col}")
+            self.update_status(f"  • Other columns kept: {len(matcher.all_columns) - 3}")
             
             # 執行比對
-            self.update_status("\n執行加合物比對...")
+            self.update_status("\n🔍 Executing adduct matching...")
             results = matcher.match_adducts(df, rt_tolerance=rt_tol)
             
             if not results.empty:
                 # 顯示加合物類型統計
                 adduct_counts = results['Pair_Adduct'].value_counts()
-                self.update_status(f"\n加合物類型分布:")
+                self.update_status(f"\n📊 Adduct type distribution:")
                 for adduct, count in adduct_counts.head(5).items():
-                    self.update_status(f"  {adduct}: {count} 個")
+                    self.update_status(f"  • {adduct}: {count} peaks")
                 
                 # 生成輸出檔名
                 input_path = Path(self.input_file)
                 output_path = input_path.parent / f"{input_path.stem}_adduct_results.xlsx"
                 
                 # 儲存結果
-                self.update_status("\n儲存結果中...")
+                self.update_status("\n💾 Saving results...")
                 matcher.save_results(df, self.input_file, results, str(output_path))
                 
                 # 顯示統計
                 self.update_status("\n" + "="*60)
-                self.update_status("✓ 處理完成!")
+                self.update_status("✅ Processing completed!")
                 self.update_status("="*60)
-                self.update_status(f"\n找到 {len(results)} 個加合物配對")
-                self.update_status(f"平均PPM誤差: {results['PPM_Error'].mean():.2f}")
-                self.update_status(f"PPM誤差範圍: {results['PPM_Error'].min():.2f} - {results['PPM_Error'].max():.2f}")
-                self.update_status(f"\n結果已儲存至:\n{output_path}")
+                self.update_status(f"\n🎉 Found {len(results)} adduct pairs")
+                self.update_status(f"📈 Average PPM error: {results['PPM_Error'].mean():.2f}")
+                self.update_status(f"📊 PPM error range: {results['PPM_Error'].min():.2f} - {results['PPM_Error'].max():.2f}")
+                self.update_status(f"\n💾 Results saved to:\n   {output_path}")
                 
-                self.messagebox.showinfo("完成", f"處理完成!\n\n找到 {len(results)} 個加合物配對\n\n結果已儲存至:\n{output_path}")
+                self.messagebox.showinfo(
+                    "✅ Completed", 
+                    f"Processing completed successfully!\n\n"
+                    f"📊 Found {len(results)} adduct pairs\n\n"
+                    f"💾 Results saved to:\n{output_path.name}"
+                )
             else:
                 self.update_status("\n" + "="*60)
-                self.update_status("⚠ 未找到符合的加合物配對")
+                self.update_status("⚠️ No matching adduct pairs found")
                 self.update_status("="*60)
-                self.update_status("\n建議:")
-                self.update_status("  1. 增加RT容許誤差 (例如: 0.1 或 0.2)")
-                self.update_status("  2. 增加PPM容許誤差 (例如: 30 或 50)")
-                self.update_status("  3. 檢查數據品質")
+                self.update_status("\n💡 Suggestions:")
+                self.update_status("  1️⃣ Increase RT tolerance (e.g., 1.0 or 2.0)")
+                self.update_status("  2️⃣ Increase PPM tolerance (e.g., 30 or 50)")
+                self.update_status("  3️⃣ Check data quality")
                 
-                self.messagebox.showwarning("提醒", "未找到符合的加合物配對\n\n請嘗試調整參數或檢查數據")
+                self.messagebox.showwarning(
+                    "⚠️ Notice", 
+                    "No matching adduct pairs found\n\n"
+                    "Please try adjusting parameters or check data quality"
+                )
             
         except Exception as e:
-            self.messagebox.showerror("錯誤", f"處理時發生錯誤:\n{str(e)}")
-            self.update_status(f"\n錯誤: {str(e)}")
+            self.messagebox.showerror("❌ Error", f"Error during processing:\n\n{str(e)}")
+            self.update_status(f"\n❌ Error: {str(e)}")
+        finally:
+            # 重新啟用按鈕
+            self.run_button.config(state="normal", bg=self.colors['secondary'])
 
 
 def main():
