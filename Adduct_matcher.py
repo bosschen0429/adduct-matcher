@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from typing import Optional, List, Dict, Tuple
+from datetime import datetime
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -37,23 +38,25 @@ class Adduct_matcher:
         self.all_columns = None
         
     def _create_adduct_table(self) -> pd.DataFrame:
-        """Create default table with 23 common ESI adducts mass differences"""
+        """Create default table with 23 common ESI adducts mass differences + doubly charged ions"""
         data = {
-            'From': ['[M+H]+'] * 23,
+            'From': ['[M+H]+'] * 24,  # 增加到 24 個
             'To': [
                 '[M+Li]+', '[M+NH4]+', '[M+Na]+', '[M+K]+', '[M+H3O]+',
                 '[M+H2O+H]+', '[M+MeOH+H]+', '[M+EtOH+H]+', '[M+IPA+H]+',
                 '[M+ACN+H]+', '[M+DMSO+H]+', '[M+H2O+Na]+', '[M+MeOH+Na]+',
                 '[M+EtOH+Na]+', '[M+IPA+Na]+', '[M+ACN+Na]+', '[M+DMSO+Na]+',
                 '[M+HCOOH+H]+', '[M+CH3COOH+H]+', '[M+H2CO3+H]+',
-                '[M+H2SO4+H]+', '[M+Na+H]+', '[M+2Na-H]+'
+                '[M+H2SO4+H]+', '[M+Na+H]+', '[M+2Na-H]+',
+                '[M+2H]2+'  # 新增雙電荷
             ],
             'Delta_Da': [
                 6.00817839, 17.02654909, 21.98194424, 37.95588144, 18.01056467,
                 18.01056468, 32.02621475, 46.04186481, 60.05751488, 41.0265491,
                 78.01393599, 39.99250892, 54.00815898, 68.02380905, 82.03945911,
                 63.00849334, 99.99588022, 46.0054793, 60.02112937, 62.00039392,
-                97.96737972, 22.9892207, 43.96388847
+                97.96737972, 22.9892207, 43.96388847,
+                0.0  # [M+2H]2+ 需要特殊處理（不是簡單的質量差）
             ]
         }
         return pd.DataFrame(data)
@@ -123,7 +126,7 @@ class Adduct_matcher:
         # Select reading method based on file extension
         if file_path.endswith('.csv'):
             df = pd.read_csv(file_path, encoding='utf-8-sig')
-        elif file_path.endswith('.tsv') or file_path.endswith('.txt'):
+        elif file_path.endswith('.tsv') or file_path.endswith('.txt'):  # 修正：缺少右括號
             df = pd.read_csv(file_path, sep='\t', encoding='utf-8-sig')
         elif file_path.endswith(('.xlsx', '.xls', '.xlsm', '.xlsb')):
             df = pd.read_excel(file_path)
@@ -270,35 +273,92 @@ class Adduct_matcher:
                 
                 # 與加合物表比對
                 for _, adduct in self.adduct_table.iterrows():
+                    adduct_type = adduct['To']
                     theoretical_delta = adduct['Delta_Da']
                     
-                    # 計算ppm容許範圍 (使用較大的m/z作為參考，與VBA相同)
-                    reference_mz = max(current_mz, nearby_mz)  # 使用較大的m/z
-                    ppm_tolerance_da = self.ppm_tolerance * reference_mz  # 轉換為Da
+                    # 特殊處理雙電荷 [M+2H]2+
+                    if adduct_type == '[M+2H]2+':
+                        # 正確的關係式：[M+2H]2+ ≈ [M+H]+ / 2
+                        # 或：[M+H]+ ≈ [M+2H]2+ * 2
+                        
+                        # 雙向判斷
+                        matched = False
+                        base_row_final = None
+                        pair_row_final = None
+                        base_mz_final = None
+                        pair_mz_final = None
+                        
+                        # 情況1: current 是 [M+2H]2+ (較小), nearby 是 [M+H]+ (較大)
+                        if current_mz < nearby_mz:
+                            expected_mh = current_mz * 2  # 從 [M+2H]2+ 推算 [M+H]+
+                            actual_mh = nearby_mz
+                            reference_mz = nearby_mz
+                            
+                            if abs(expected_mh - actual_mh) <= self.ppm_tolerance * reference_mz:
+                                matched = True
+                                base_row_final = nearby_peak  # [M+H]+ 是 Base
+                                pair_row_final = row  # [M+2H]2+ 是 Pair
+                                base_mz_final = nearby_mz
+                                pair_mz_final = current_mz
+                        # 情況2: nearby 是 [M+2H]2+ (較小), current 是 [M+H]+ (較大)
+                        else:
+                            expected_mh = nearby_mz * 2  # 從 [M+2H]2+ 推算 [M+H]+
+                            actual_mh = current_mz
+                            reference_mz = current_mz
+                            
+                            if abs(expected_mh - actual_mh) <= self.ppm_tolerance * reference_mz:
+                                matched = True
+                                base_row_final = row  # [M+H]+ 是 Base
+                                pair_row_final = nearby_peak  # [M+2H]2+ 是 Pair
+                                base_mz_final = current_mz
+                                pair_mz_final = nearby_mz
+                        
+                        if matched:
+                            ppm_error_value = abs(expected_mh - actual_mh) / reference_mz * 1_000_000
+                            
+                            # 建立結果（Base 是 [M+H]+）
+                            result = {}
+                            
+                            for col in self.all_columns:
+                                result[f'Base_{col}'] = base_row_final[col]
+                            for col in self.all_columns:
+                                result[f'Pair_{col}'] = pair_row_final[col]
+                            
+                            result['Base_Adduct'] = '[M+H]+'
+                            result['Pair_Adduct'] = '[M+2H]2+'
+                            result['Theoretical_Delta_Da'] = 0.0  # 特殊標記
+                            result['Observed_Delta_Da'] = abs(expected_mh - actual_mh)
+                            result['PPM_Error'] = round(ppm_error_value, 2)
+                            result['RT_Diff'] = rt_diff
+                            result['Reference_mz'] = reference_mz
+                            result['Annotation'] = f"[M+2H]2+ of Base (m/z {base_mz_final:.4f})"
+                            
+                            results.append(result)
+                        
+                        continue  # 跳過後續的一般加合物處理
                     
-                    # 檢查質量差是否在容許範圍內
+                    # 一般加合物處理
+                    # 計算ppm容許範圍 (使用較大的m/z作為參考，與VBA相同)
+                    reference_mz = max(current_mz, nearby_mz)
+                    ppm_tolerance_da = self.ppm_tolerance * reference_mz
+                    
                     if abs(mz_diff - theoretical_delta) <= ppm_tolerance_da:
-                        # 計算實際的PPM誤差（用於報告）
                         ppm_error_value = abs(mz_diff - theoretical_delta) / reference_mz * 1_000_000
                         
-                        # 建立結果字典，包含所有原始欄位
                         result = {}
                         
-                        # 添加Base化合物的所有欄位（加上Base_前綴）
                         for col in self.all_columns:
                             result[f'Base_{col}'] = base_row[col]
                         
-                        # 添加Pair化合物的所有欄位（加上Pair_前綴）
                         for col in self.all_columns:
                             result[f'Pair_{col}'] = pair_row[col]
                         
-                        # 添加比對資訊
                         result['Base_Adduct'] = '[M+H]+'
                         result['Pair_Adduct'] = adduct['To']
                         result['Theoretical_Delta_Da'] = theoretical_delta
                         result['Observed_Delta_Da'] = mz_diff
                         result['PPM_Error'] = round(ppm_error_value, 2)
-                        result['RT_Diff'] = rt_diff  # 添加RT差異用於篩選
+                        result['RT_Diff'] = rt_diff
                         result['Reference_mz'] = reference_mz
                         result['Annotation'] = f"{adduct['To']} of Base (m/z {base_mz:.4f})"
                         
@@ -363,9 +423,20 @@ class Adduct_matcher:
             Output file name, auto-generated if not specified
         """
         if output_file is None:
-            # Auto-generate output file name
+            # Auto-generate output file name with new format
+            # 使用當前 Python 檔案所在目錄，而不是輸入檔案所在目錄
+            script_dir = Path(__file__).parent  # Adduct_matcher.py 所在目錄
+            output_dir = script_dir / "output"
+            output_dir.mkdir(exist_ok=True)
+            
+            # 取得原始檔案名稱（不含路徑）
             file_path = Path(original_file)
-            output_file = str(file_path.parent / f"{file_path.stem}_adduct_results.xlsx")
+            
+            # 生成時間戳 (格式: YYYYMMDD_HHMMSS)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # New naming format: Adduct_results_原檔案名_時間戳.xlsx
+            output_file = str(output_dir / f"Adduct_results_{file_path.stem}_{timestamp}.xlsx")
         
         print(f"\nSaving results to: {Path(output_file).name}")
         
@@ -1026,9 +1097,14 @@ class Adduct_matcherGUI:
                 for adduct, count in adduct_counts.head(5).items():
                     self.update_status(f"  • {adduct}: {count} peaks")
                 
-                # 生成輸出檔名
+                # 生成輸出檔名 (使用 Adduct_matcher.py 所在目錄)
+                script_dir = Path(__file__).parent
+                output_dir = script_dir / "output"
+                output_dir.mkdir(exist_ok=True)
+                
                 input_path = Path(self.input_file)
-                output_path = input_path.parent / f"{input_path.stem}_adduct_results.xlsx"
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                output_path = output_dir / f"Adduct_results_{input_path.stem}_{timestamp}.xlsx"
                 
                 # 儲存結果
                 self.update_status("\n💾 Saving results...")

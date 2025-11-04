@@ -1,4 +1,7 @@
-# Python
+# Output folder - generated results
+output/
+
+# Python cache
 __pycache__/
 *.py[cod]
 *$py.class
@@ -20,10 +23,10 @@ wheels/
 .installed.cfg
 *.egg
 
-# Virtual Environment
+# Virtual environment
 venv/
-ENV/
 env/
+ENV/
 
 # IDE
 .vscode/
