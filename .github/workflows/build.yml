@@ -3,12 +3,12 @@ name: Build and Package
 on:
   push:
     tags:
-      - 'v*'
+      - 'v'
   workflow_dispatch:
 
 jobs:
   build-windows:
-    name: Build Windows
+    name: Adduct_matcher_Win
     runs-on: windows-latest
     
     steps:
@@ -39,7 +39,7 @@ jobs:
           dist/README.md
 
   build-macos:
-    name: Build macOS
+    name: Adduct_matcher_macOS
     runs-on: macos-latest
     
     steps:
