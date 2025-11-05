@@ -47,7 +47,7 @@ jobs:
     
     - uses: actions/upload-artifact@v4
       with:
-        name: Windows-Build
+        name: Adduct_matcher_${{ steps.get_version.outputs.version }}_Win
         path: Adduct_matcher_${{ steps.get_version.outputs.version }}_Win/
 
   build-macos:
@@ -95,7 +95,7 @@ jobs:
     
     - uses: actions/upload-artifact@v4
       with:
-        name: macOS-Build
+        name: Adduct_matcher_${{ steps.get_version.outputs.version }}_macOS
         path: Adduct_matcher_${{ steps.get_version.outputs.version }}_macOS/
 
   create-release:
@@ -112,14 +112,18 @@ jobs:
         echo "version=$VERSION" >> $GITHUB_OUTPUT
     
     - uses: actions/download-artifact@v4
+      with:
+        pattern: Adduct_matcher_*
+        merge-multiple: false
+    
+    - name: List downloaded artifacts
+      run: |
+        ls -la
     
     - name: Zip files
       run: |
-        cd Windows-Build
-        zip -r ../Adduct_matcher_${{ steps.get_version.outputs.version }}_Win.zip Adduct_matcher_${{ steps.get_version.outputs.version }}_Win
-        cd ../macOS-Build
-        zip -r ../Adduct_matcher_${{ steps.get_version.outputs.version }}_macOS.zip Adduct_matcher_${{ steps.get_version.outputs.version }}_macOS
-        cd ..
+        zip -r Adduct_matcher_${{ steps.get_version.outputs.version }}_Win.zip Adduct_matcher_${{ steps.get_version.outputs.version }}_Win
+        zip -r Adduct_matcher_${{ steps.get_version.outputs.version }}_macOS.zip Adduct_matcher_${{ steps.get_version.outputs.version }}_macOS
     
     - uses: softprops/action-gh-release@v2
       with:

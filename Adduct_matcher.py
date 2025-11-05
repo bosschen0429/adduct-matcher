@@ -47,7 +47,7 @@ class Adduct_matcher:
         """
         if getattr(sys, 'frozen', False):
             # 打包後：使用 exe 檔所在目錄
-            return Path(sys.executable).parent
+            return Path(os.path.dirname(sys.executable))
         else:
             # 開發環境：使用 Python 腳本所在目錄
             return Path(__file__).parent
@@ -441,7 +441,15 @@ class Adduct_matcher:
             # 使用 exe 檔所在目錄（打包後）或 Python 腳本目錄（開發環境）
             executable_dir = self._get_executable_dir()
             output_dir = executable_dir / "output"
-            output_dir.mkdir(exist_ok=True)
+            
+            # 確保目錄存在
+            try:
+                output_dir.mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                print(f"Warning: Failed to create output directory: {e}")
+                # 備用方案：使用當前工作目錄
+                output_dir = Path.cwd() / "output"
+                output_dir.mkdir(parents=True, exist_ok=True)
             
             # 取得原始檔案名稱（不含路徑）
             file_path = Path(original_file)
@@ -452,7 +460,8 @@ class Adduct_matcher:
             # New naming format: Adduct_results_原檔案名_時間戳.xlsx
             output_file = str(output_dir / f"Adduct_results_{file_path.stem}_{timestamp}.xlsx")
         
-        print(f"\nSaving results to: {Path(output_file).name}")
+        print(f"\nSaving results to: {output_file}")
+        print(f"Output directory: {Path(output_file).parent}")
         
         # 準備標記資訊
         df_marked = df.copy()
@@ -626,7 +635,7 @@ class Adduct_matcher:
                         for col_idx in range(1, len(df_non_adduct.columns) + 1):
                             cell = worksheet2.cell(row=row_idx, column=col_idx)
                             cell.font = red_font
-                
+        
                 # 格式化 Intensity 欄位
                 if self.intensity_col in df_non_adduct.columns:
                     intensity_col_idx = list(df_non_adduct.columns).index(self.intensity_col) + 1
@@ -1111,10 +1120,10 @@ class Adduct_matcherGUI:
                 for adduct, count in adduct_counts.head(5).items():
                     self.update_status(f"  • {adduct}: {count} peaks")
                 
-                # 生成輸出檔名 (使用 Adduct_matcher.py 所在目錄)
-                script_dir = Path(__file__).parent
-                output_dir = script_dir / "output"
-                output_dir.mkdir(exist_ok=True)
+                # 生成輸出檔名 (使用 exe 檔所在目錄)
+                executable_dir = matcher._get_executable_dir()
+                output_dir = executable_dir / "output"
+                output_dir.mkdir(parents=True, exist_ok=True)
                 
                 input_path = Path(self.input_file)
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
