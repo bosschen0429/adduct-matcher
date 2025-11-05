@@ -3,7 +3,7 @@ name: Build and Package
 on:
   push:
     tags:
-      - 'v'
+      - 'v*'
   workflow_dispatch:
 
 jobs:
@@ -27,16 +27,17 @@ jobs:
       run: |
         pyinstaller --onefile --name="Adduct_matcher" "Adduct_matcher.py"
     
-    - name: Copy files
+    - name: Prepare package
       run: |
-        copy README.md dist\
+        mkdir Adduct_matcher_v1.1
+        move dist\Adduct_matcher.exe Adduct_matcher_v1.1\
+        copy README.md Adduct_matcher_v1.1\
+        copy default_Adduct_Table.xlsx Adduct_matcher_v1.1\
     
     - uses: actions/upload-artifact@v4
       with:
         name: Windows-Build
-        path: |
-          dist/Adduct_matcher.exe
-          dist/README.md
+        path: Adduct_matcher_v1.1/
 
   build-macos:
     name: Adduct_matcher_macOS
@@ -64,16 +65,17 @@ jobs:
       run: |
         xattr -cr dist/Adduct_matcher || true
     
-    - name: Copy files
+    - name: Prepare package
       run: |
-        cp README.md dist/
+        mkdir Adduct_matcher_v1.1
+        mv dist/Adduct_matcher Adduct_matcher_v1.1/
+        cp README.md Adduct_matcher_v1.1/
+        cp default_Adduct_Table.xlsx Adduct_matcher_v1.1/
     
     - uses: actions/upload-artifact@v4
       with:
         name: macOS-Build
-        path: |
-          dist/Adduct_matcher
-          dist/README.md
+        path: Adduct_matcher_v1.1/
 
   create-release:
     name: Create Release
@@ -87,15 +89,15 @@ jobs:
     - name: Zip files
       run: |
         cd Windows-Build
-        zip -r ../Adduct_matcher-Windows.zip *
+        zip -r ../Adduct_matcher_v1.1-Windows.zip Adduct_matcher_v1.1
         cd ../macOS-Build
-        zip -r ../Adduct_matcher-macOS.zip *
+        zip -r ../Adduct_matcher_v1.1-macOS.zip Adduct_matcher_v1.1
         cd ..
     
     - uses: softprops/action-gh-release@v2
       with:
         files: |
-          Adduct_matcher-Windows.zip
-          Adduct_matcher-macOS.zip
+          Adduct_matcher_v1.1-Windows.zip
+          Adduct_matcher_v1.1-macOS.zip
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
