@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Optional, List, Dict, Tuple
 from datetime import datetime
 import warnings
+import sys
+import os
 warnings.filterwarnings('ignore')
 
 
@@ -36,7 +38,20 @@ class Adduct_matcher:
         self.mz_col = None
         self.intensity_col = None
         self.all_columns = None
-        
+    
+    def _get_executable_dir(self) -> Path:
+        """
+        取得執行檔所在目錄
+        - 在打包後返回 .exe 所在目錄
+        - 在開發環境返回 Python 腳本所在目錄
+        """
+        if getattr(sys, 'frozen', False):
+            # 打包後：使用 exe 檔所在目錄
+            return Path(sys.executable).parent
+        else:
+            # 開發環境：使用 Python 腳本所在目錄
+            return Path(__file__).parent
+    
     def _create_adduct_table(self) -> pd.DataFrame:
         """Create default table with 23 common ESI adducts mass differences + doubly charged ions"""
         data = {
@@ -423,10 +438,9 @@ class Adduct_matcher:
             Output file name, auto-generated if not specified
         """
         if output_file is None:
-            # Auto-generate output file name with new format
-            # 使用當前 Python 檔案所在目錄，而不是輸入檔案所在目錄
-            script_dir = Path(__file__).parent  # Adduct_matcher.py 所在目錄
-            output_dir = script_dir / "output"
+            # 使用 exe 檔所在目錄（打包後）或 Python 腳本目錄（開發環境）
+            executable_dir = self._get_executable_dir()
+            output_dir = executable_dir / "output"
             output_dir.mkdir(exist_ok=True)
             
             # 取得原始檔案名稱（不含路徑）

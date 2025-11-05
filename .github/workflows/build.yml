@@ -18,6 +18,17 @@ jobs:
       with:
         python-version: '3.11'
     
+    - name: Get version
+      id: get_version
+      shell: bash
+      run: |
+        if [ "${{ github.ref_type }}" == "tag" ]; then
+          VERSION=${{ github.ref_name }}
+        else
+          VERSION="dev"
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+    
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
@@ -29,15 +40,15 @@ jobs:
     
     - name: Prepare package
       run: |
-        mkdir Adduct_matcher_v1.1
-        move dist\Adduct_matcher.exe Adduct_matcher_v1.1\
-        copy README.md Adduct_matcher_v1.1\
-        copy default_Adduct_Table.xlsx Adduct_matcher_v1.1\
+        mkdir Adduct_matcher_${{ steps.get_version.outputs.version }}_Win
+        move dist\Adduct_matcher.exe Adduct_matcher_${{ steps.get_version.outputs.version }}_Win\
+        copy README.md Adduct_matcher_${{ steps.get_version.outputs.version }}_Win\
+        copy default_Adduct_Table.xlsx Adduct_matcher_${{ steps.get_version.outputs.version }}_Win\
     
     - uses: actions/upload-artifact@v4
       with:
         name: Windows-Build
-        path: Adduct_matcher_v1.1/
+        path: Adduct_matcher_${{ steps.get_version.outputs.version }}_Win/
 
   build-macos:
     name: Adduct_matcher_macOS
@@ -49,6 +60,16 @@ jobs:
     - uses: actions/setup-python@v5
       with:
         python-version: '3.11'
+    
+    - name: Get version
+      id: get_version
+      run: |
+        if [ "${{ github.ref_type }}" == "tag" ]; then
+          VERSION=${{ github.ref_name }}
+        else
+          VERSION="dev"
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
     
     - name: Install dependencies
       run: |
@@ -67,15 +88,15 @@ jobs:
     
     - name: Prepare package
       run: |
-        mkdir Adduct_matcher_v1.1
-        mv dist/Adduct_matcher Adduct_matcher_v1.1/
-        cp README.md Adduct_matcher_v1.1/
-        cp default_Adduct_Table.xlsx Adduct_matcher_v1.1/
+        mkdir Adduct_matcher_${{ steps.get_version.outputs.version }}_macOS
+        mv dist/Adduct_matcher Adduct_matcher_${{ steps.get_version.outputs.version }}_macOS/
+        cp README.md Adduct_matcher_${{ steps.get_version.outputs.version }}_macOS/
+        cp default_Adduct_Table.xlsx Adduct_matcher_${{ steps.get_version.outputs.version }}_macOS/
     
     - uses: actions/upload-artifact@v4
       with:
         name: macOS-Build
-        path: Adduct_matcher_v1.1/
+        path: Adduct_matcher_${{ steps.get_version.outputs.version }}_macOS/
 
   create-release:
     name: Create Release
@@ -84,20 +105,26 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     
     steps:
+    - name: Get version
+      id: get_version
+      run: |
+        VERSION=${{ github.ref_name }}
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+    
     - uses: actions/download-artifact@v4
     
     - name: Zip files
       run: |
         cd Windows-Build
-        zip -r ../Adduct_matcher_v1.1-Windows.zip Adduct_matcher_v1.1
+        zip -r ../Adduct_matcher_${{ steps.get_version.outputs.version }}_Win.zip Adduct_matcher_${{ steps.get_version.outputs.version }}_Win
         cd ../macOS-Build
-        zip -r ../Adduct_matcher_v1.1-macOS.zip Adduct_matcher_v1.1
+        zip -r ../Adduct_matcher_${{ steps.get_version.outputs.version }}_macOS.zip Adduct_matcher_${{ steps.get_version.outputs.version }}_macOS
         cd ..
     
     - uses: softprops/action-gh-release@v2
       with:
         files: |
-          Adduct_matcher_v1.1-Windows.zip
-          Adduct_matcher_v1.1-macOS.zip
+          Adduct_matcher_${{ steps.get_version.outputs.version }}_Win.zip
+          Adduct_matcher_${{ steps.get_version.outputs.version }}_macOS.zip
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
